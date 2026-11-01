@@ -135,3 +135,33 @@ func TestConsoleLogoff(t *testing.T) {
 		t.Fatal("logoff for a profile not on this console accepted")
 	}
 }
+
+// Carried over from x360-xuacs agegroup_test.go.
+func TestNativeLogoffAcknowledgement(t *testing.T) {
+	h := &Handler{}
+	req, _ := hex.DecodeString("00040000080000000300000025e4cd2d00000000000000000000000000000000dbda39515f000900")
+	out, err := h.presenceFriends(context.Background(), req, fixtureUser)
+	if err != nil || len(out) != 0 {
+		t.Fatalf("logoff reply %x %v", out, err)
+	}
+	if _, err = h.presenceFriends(context.Background(), req, "0009000000000001:other"); err == nil {
+		t.Fatal("accepted foreign logoff")
+	}
+	if _, err = h.presenceFriends(context.Background(), req[:39], fixtureUser); err == nil {
+		t.Fatal("accepted truncated logoff")
+	}
+}
+
+func TestLogoffAfterTicketUserRemoval(t *testing.T) {
+	h := &Handler{IDs: ids{profiles: []xuacsapi.ConsoleProfile{{Account: "owner", Online: 0x0009005f5139dadb}}}}
+	req, _ := hex.DecodeString("00040000080000000300000025e4cd2d00000000000000000000000000000000dbda39515f000900")
+	if err := h.consoleLogoff(context.Background(), req, "", "478700668470@xbox.com"); err != nil {
+		t.Fatal(err)
+	}
+	h.IDs = ids{}
+	for _, console := range []string{"", "111111111111@xbox.com", "malformed"} {
+		if err := h.consoleLogoff(context.Background(), req, "", console); err == nil {
+			t.Errorf("accepted unbound console %q", console)
+		}
+	}
+}
