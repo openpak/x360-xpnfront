@@ -1,0 +1,14 @@
+# Merge into the primary's shared ~/openpak/deploy/traefik/dynamic.yml. The gateway forwards
+# Live service 1 here.
+http:
+  routers:
+    x360-xpnfront-web:
+      entryPoints: [web]
+      rule: PathPrefix(`/xpnfront`)
+      priority: 40
+      service: x360-xpnfront-http
+  services:
+    x360-xpnfront-http:
+      loadBalancer:
+        servers:
+        - url: http://openpak-x360-xpnfront:10001

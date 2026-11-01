@@ -1,0 +1,25 @@
+# PRIMARY host. OpenPak Xbox 360 presence and friends server (x360-xpnfront): Live service 1 requests the security
+# gateway tunnels to the primary's Traefik. Identity headers are trusted only with the gateway key.
+[Unit]
+Description=OpenPak Xbox 360 presence and friends server (x360-xpnfront)
+
+[Container]
+ContainerName=openpak-x360-xpnfront
+Image=ghcr.io/openpak/x360-xpnfront:latest
+AutoUpdate=registry
+Network=openpak.network
+IP=10.89.2.203
+Environment=X360_XPNFRONT_ADDR=:10001
+EnvironmentFile=%h/openpak/deploy/x360-gateway-key.env
+EnvironmentFile=%h/openpak/deploy/x360-xpnfront/core.env
+EnvironmentFile=%h/openpak/deploy/x360-xuacs-internal.env
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+UserNS=keep-id:uid=100,gid=101
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
