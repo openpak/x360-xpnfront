@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,6 +26,8 @@ const fixtureUser = "0009005f5139dadb:owner"
 type graph struct {
 	failure, empty bool
 	owners         []string
+	pending        bool
+	changes        []string
 }
 
 func (c *graph) ListFriends(_ context.Context, a string) ([]accountcore.Friend, error) {
@@ -45,14 +48,43 @@ func (c *graph) ListBlocks(_ context.Context, a string) ([]accountcore.Friend, e
 }
 func (c *graph) CanDiscover(_ context.Context, a, b string) (bool, error) { return b != "hidden", nil }
 
+func (c *graph) ListIncomingRequests(_ context.Context, a string) ([]accountcore.Friend, error) {
+	if a == "owner" && c.pending {
+		return []accountcore.Friend{{AccountID: "asker"}}, nil
+	}
+	return nil, nil
+}
+func (c *graph) ListOutgoingRequests(_ context.Context, a string) ([]accountcore.Friend, error) {
+	if a == "owner" && c.pending {
+		return []accountcore.Friend{{AccountID: "asked"}}, nil
+	}
+	return nil, nil
+}
+func (c *graph) Block(_ context.Context, a, b string) error {
+	c.changes = append(c.changes, "block "+a+" "+b)
+	return nil
+}
+func (c *graph) Unblock(_ context.Context, a, b string) error {
+	c.changes = append(c.changes, "unblock "+a+" "+b)
+	return nil
+}
+
 type ids struct{ profiles []xuacsapi.ConsoleProfile }
 
-func (ids) Identity(_ context.Context, a string) (uint64, string, error) { return 0x0009000000000002, "Friend", nil }
+func (ids) Identity(_ context.Context, a string) (uint64, string, error) {
+	return 0x0009000000000002, "Friend", nil
+}
 func (ids) OnlineXUID(_ context.Context, a string) (uint64, error) {
 	if a == "blocked" {
 		return 0x0009000000000003, nil
 	}
 	return 0x0009000000000002, nil
+}
+func (ids) AccountByXUID(_ context.Context, x uint64) (string, bool, error) {
+	if x == 0x0009000000000003 {
+		return "blocked", true, nil
+	}
+	return "", false, nil
 }
 func (i ids) ConsoleProfiles(context.Context, string) ([]xuacsapi.ConsoleProfile, error) {
 	return i.profiles, nil
@@ -163,5 +195,133 @@ func TestLogoffAfterTicketUserRemoval(t *testing.T) {
 		if err := h.consoleLogoff(context.Background(), req, "", console); err == nil {
 			t.Errorf("accepted unbound console %q", console)
 		}
+	}
+}
+
+// Request/reply hex from re-friends-requests.md section 3 and the codec-checked
+// minimal 0x17 reply.
+const hdr = "30040000%s00000003000000" + "25e4cd2d00000000000000000000000000000000"
+
+func xpHeader(typ uint32, msgLen uint32) []byte {
+	h := make([]byte, 32)
+	binary.LittleEndian.PutUint32(h, typ)
+	binary.LittleEndian.PutUint32(h[4:], msgLen)
+	binary.LittleEndian.PutUint32(h[8:], 3)
+	sg, _ := hex.DecodeString("25e4cd2d00000000000000000000000000000000")
+	copy(h[12:], sg)
+	return h
+}
+
+func u64(b []byte, v uint64) []byte { return binary.LittleEndian.AppendUint64(b, v) }
+
+func TestBlockUnblock(t *testing.T) {
+	g := &graph{}
+	h := &Handler{Social: g, IDs: ids{}}
+	for _, typ := range []uint32{0x3F0, 0x3F1} {
+		req := u64(u64(xpHeader(typ, 0x10), 0x0009005f5139dadb), 0x0009000000000003)
+		out, err := h.presenceFriends(context.Background(), req, fixtureUser)
+		if err != nil || len(out) != 0 {
+			t.Fatalf("%x: %x %v", typ, out, err)
+		}
+	}
+	if strings.Join(g.changes, ",") != "block owner blocked,unblock owner blocked" {
+		t.Fatalf("changes %v", g.changes)
+	}
+	// owner not on the ticket
+	req := u64(u64(xpHeader(0x3F0, 0x10), 0x0009000000000009), 0x0009000000000003)
+	if _, err := h.presenceFriends(context.Background(), req, fixtureUser); err == nil {
+		t.Fatal("foreign owner accepted")
+	}
+}
+
+func TestPresenceBlob(t *testing.T) {
+	st := &State{Path: filepath.Join(t.TempDir(), "s.json")}
+	h := &Handler{Social: &graph{}, IDs: ids{}, State: st}
+	user := uint64(0x0009005f5139dadb)
+	get := u64(xpHeader(0x430, 8), user)
+	want0, _ := hex.DecodeString("30040000060000000300000025e4cd2d00000000000000000000000000000000" + "00000000" + "0000")
+	got, err := h.presenceFriends(context.Background(), get, fixtureUser)
+	if err != nil || !bytes.Equal(got, want0) {
+		t.Fatalf("empty get: %x %v", got, err)
+	}
+	blob := bytes.Repeat([]byte{0xAB}, 60)
+	set := append(binary.LittleEndian.AppendUint16(u64(xpHeader(0x42F, 10+60), user), 60), blob...)
+	got, err = h.presenceFriends(context.Background(), set, fixtureUser)
+	want, _ := hex.DecodeString("30040000040000000300000025e4cd2d00000000000000000000000000000000" + "00000000")
+	want[0], want[1] = 0x2F, 0x04
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("set: %x %v", got, err)
+	}
+	// persisted and reloaded
+	h.State = &State{Path: st.Path}
+	got, err = h.presenceFriends(context.Background(), get, fixtureUser)
+	if err != nil || len(got) != 38+60 || !bytes.Equal(got[38:], blob) || binary.LittleEndian.Uint32(got[4:]) != 66 || binary.LittleEndian.Uint16(got[36:]) != 60 {
+		t.Fatalf("get: %x %v", got, err)
+	}
+}
+
+func TestInvitesAndPendingStatus(t *testing.T) {
+	h := &Handler{Social: &graph{pending: true}, IDs: ids{}}
+	user := uint64(0x0009005f5139dadb)
+	inv := binary.LittleEndian.AppendUint32(u64(u64(xpHeader(0x416, 0x14), user), 7), 0)
+	if out, err := h.presenceFriends(context.Background(), inv, fixtureUser); err != nil || len(out) != 0 {
+		t.Fatalf("0x207: %x %v", out, err)
+	}
+	ans := binary.LittleEndian.AppendUint16(append(u64(u64(xpHeader(0x3F4, 0x1A), user), 7), make([]byte, 8)...), 1)
+	if out, err := h.presenceFriends(context.Background(), ans, fixtureUser); err != nil || len(out) != 0 {
+		t.Fatalf("0x581: %x %v", out, err)
+	}
+	req, _ := hex.DecodeString(aliveFixture)
+	got, err := h.presenceFriends(context.Background(), req, fixtureUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st []byte
+	for rest := got[48:]; len(rest) >= 11; {
+		st = append(st, rest[10])
+		rest = rest[11+int(binary.LittleEndian.Uint16(rest[8:])):]
+	}
+	if string(st) != "\x00\x01\x02" {
+		t.Fatalf("statuses %v", st)
+	}
+}
+
+type fakeMail struct {
+	n   int
+	err error
+}
+
+func (f fakeMail) Unread(context.Context, uint64) (int, error) { return f.n, f.err }
+
+func TestMailFlag(t *testing.T) {
+	req, _ := hex.DecodeString(aliveFixture)
+	hrOf := func(m Unreads) uint32 {
+		h := &Handler{Social: &graph{empty: true}, IDs: ids{}, Mail: m}
+		got, err := h.presenceFriends(context.Background(), req, fixtureUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return binary.LittleEndian.Uint32(got[32:])
+	}
+	if hrOf(fakeMail{n: 2}) != 0x001512F0 || hrOf(fakeMail{}) != 0 || hrOf(fakeMail{err: errors.New("down")}) != 0 || hrOf(nil) != 0 {
+		t.Fatal("mail flag")
+	}
+}
+
+func TestUnreadClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Internal-Key") != "k" || r.URL.Path != "/internal/v1/unread" || r.URL.Query().Get("xuid") != "0009005f5139dadb" {
+			http.Error(w, "no", 403)
+			return
+		}
+		w.Write([]byte(`{"unread":3}`))
+	}))
+	defer srv.Close()
+	n, err := (&UnreadClient{URL: srv.URL, Key: "k"}).Unread(context.Background(), 0x0009005f5139dadb)
+	if err != nil || n != 3 {
+		t.Fatalf("%d %v", n, err)
+	}
+	if _, err := (&UnreadClient{URL: srv.URL, Key: "bad"}).Unread(context.Background(), 1); err == nil {
+		t.Fatal("bad key accepted")
 	}
 }

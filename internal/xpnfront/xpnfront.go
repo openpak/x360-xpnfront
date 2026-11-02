@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openpak/x360-common/accountcore"
@@ -40,6 +41,10 @@ type Social interface {
 	ListFriends(context.Context, string) ([]accountcore.Friend, error)
 	ListBlocks(context.Context, string) ([]accountcore.Friend, error)
 	CanDiscover(context.Context, string, string) (bool, error)
+	ListIncomingRequests(context.Context, string) ([]accountcore.Friend, error)
+	ListOutgoingRequests(context.Context, string) ([]accountcore.Friend, error)
+	Block(ctx context.Context, blocker, blocked string) error
+	Unblock(ctx context.Context, blocker, blocked string) error
 }
 
 // Identities are the online XUIDs and gamertags x360-xuacs owns.
@@ -47,6 +52,7 @@ type Identities interface {
 	Identity(ctx context.Context, account string) (uint64, string, error)
 	OnlineXUID(ctx context.Context, account string) (uint64, error)
 	ConsoleProfiles(ctx context.Context, console string) ([]xuacsapi.ConsoleProfile, error)
+	AccountByXUID(ctx context.Context, xuid uint64) (string, bool, error)
 }
 
 // Handler serves PathXPresence. Wrap it with wire.Guard.
@@ -54,6 +60,11 @@ type Handler struct {
 	Social Social
 	IDs    Identities
 	Log    *slog.Logger
+	State  *State  // presence blobs (0x16/0x17); nil answers 0x17 empty
+	Mail   Unreads // x360-xmessaging unread counts; nil = never flag mail
+
+	warnMu sync.Mutex
+	warned time.Time
 }
 
 func (h *Handler) log() *slog.Logger {
@@ -68,7 +79,7 @@ type reqErr struct {
 	msg    string
 }
 
-func (e *reqErr) Error() string             { return e.msg }
+func (e *reqErr) Error() string           { return e.msg }
 func deny(status int, msg string) *reqErr { return &reqErr{status, msg} }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -182,12 +193,14 @@ func ticketUsers(header string) (map[uint64]string, error) {
 }
 
 type friendRecord struct {
-	xuid uint64
-	name string
+	xuid   uint64
+	name   string
+	status byte // 0 accepted, 1 outgoing request pending, 2 incoming request pending
 }
 type friendSnapshot struct {
 	friends []friendRecord
 	blocks  []uint64
+	hr      uint32 // 0, or hrNewMail when the user has unread mail
 }
 
 func (h *Handler) friendSnapshot(ctx context.Context, account string) (*friendSnapshot, error) {
@@ -229,16 +242,34 @@ func (h *Handler) friendSnapshot(ctx context.Context, account string) (*friendSn
 		if err != nil {
 			return nil, err
 		}
-		// Native XAM permits at most 16 name bytes, including the terminator.
-		if len(name) == 0 || len(name) > 15 || strings.IndexByte(name, 0) >= 0 {
+		if !nativeName(name) {
 			return nil, errors.New("invalid native friend gamertag")
 		}
-		for _, c := range []byte(name) {
-			if c < 0x20 || c > 0x7e {
-				return nil, errors.New("non-ASCII native friend gamertag")
+		s.friends = append(s.friends, friendRecord{xuid, name, 0})
+	}
+	incoming, err := h.Social.ListIncomingRequests(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	outgoing, err := h.Social.ListOutgoingRequests(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	for status, list := range [][]accountcore.Friend{outgoing, incoming} {
+		for _, f := range list {
+			if f.AccountID == account || seen[f.AccountID] || blocked[f.AccountID] {
+				continue
 			}
+			seen[f.AccountID] = true
+			xuid, name, err := h.IDs.Identity(ctx, f.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			if !nativeName(name) {
+				return nil, errors.New("invalid native friend gamertag")
+			}
+			s.friends = append(s.friends, friendRecord{xuid, name, byte(status + 1)})
 		}
-		s.friends = append(s.friends, friendRecord{xuid, name})
 	}
 	if len(s.friends) > 100 || len(s.blocks) > 250 {
 		return nil, errors.New("social graph exceeds native Xbox 360 limits")
@@ -246,6 +277,19 @@ func (h *Handler) friendSnapshot(ctx context.Context, account string) (*friendSn
 	sort.Slice(s.friends, func(i, j int) bool { return s.friends[i].xuid < s.friends[j].xuid })
 	sort.Slice(s.blocks, func(i, j int) bool { return s.blocks[i] < s.blocks[j] })
 	return s, nil
+}
+
+// nativeName: XAM permits at most 16 name bytes including the terminator.
+func nativeName(name string) bool {
+	if len(name) == 0 || len(name) > 15 {
+		return false
+	}
+	for _, c := range []byte(name) {
+		if c < 0x20 || c > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func listVersion(b []byte) uint32 {
@@ -265,7 +309,7 @@ func (s *friendSnapshot) reply(e []byte) []byte {
 	for _, f := range s.friends {
 		friends = binary.LittleEndian.AppendUint64(friends, f.xuid)
 		friends = binary.LittleEndian.AppendUint16(friends, uint16(len(f.name)+1))
-		friends = append(friends, 0) // accepted friendship; pending directions need separate schemas
+		friends = append(friends, f.status)
 		friends = append(friends, f.name...)
 		friends = append(friends, 0)
 	}
@@ -274,7 +318,7 @@ func (s *friendSnapshot) reply(e []byte) []byte {
 	}
 	out := append([]byte{}, e[:presenceHeader]...)
 	binary.LittleEndian.PutUint32(out[4:], uint32(presenceBody+len(friends)+len(blocks)))
-	out = binary.LittleEndian.AppendUint32(out, 0)
+	out = binary.LittleEndian.AppendUint32(out, s.hr)
 	out = binary.LittleEndian.AppendUint32(out, listVersion(friends))
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(s.friends)))
 	out = binary.LittleEndian.AppendUint32(out, listVersion(blocks))
@@ -316,6 +360,22 @@ func (h *Handler) presenceFriends(ctx context.Context, body []byte, usersHeader 
 			}
 			continue
 		}
+		if t := binary.LittleEndian.Uint32(e); t != 0x401 {
+			count++
+			if count > 16 {
+				return nil, deny(400, "too many presence entries")
+			}
+			reply, ok, err := h.other(ctx, e, users)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				h.log().Warn("unsupported xpresence message", "type", t, "len", len(e))
+				return nil, deny(400, "unsupported presence request")
+			}
+			out = append(out, reply...)
+			continue
+		}
 		if len(e) < 0x99 {
 			return nil, deny(400, "short presence alive")
 		}
@@ -334,6 +394,9 @@ func (h *Handler) presenceFriends(ctx context.Context, body []byte, usersHeader 
 		if err != nil {
 			h.log().Error("social snapshot failed", "err", err)
 			return nil, deny(503, "social service unavailable")
+		}
+		if h.hasMail(ctx, binary.LittleEndian.Uint64(e[0x20:])) {
+			snapshot.hr = hrNewMail
 		}
 		out = append(out, snapshot.reply(e)...)
 	}

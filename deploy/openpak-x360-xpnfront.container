@@ -10,9 +10,14 @@ AutoUpdate=registry
 Network=openpak.network
 IP=10.89.2.203
 Environment=X360_XPNFRONT_ADDR=:10001
+Environment=X360_XPNFRONT_STATE=/var/lib/x360-xpnfront/state.json
+Environment=X360_XMESSAGING_INTERNAL_URL=http://openpak-x360-xmessaging:10118
 EnvironmentFile=%h/openpak/deploy/x360-gateway-key.env
 EnvironmentFile=%h/openpak/deploy/x360-xpnfront/core.env
 EnvironmentFile=%h/openpak/deploy/x360-xuacs-internal.env
+# X360_XMESSAGING_INTERNAL_KEY (x360-xmessaging's internal API; unreachable = no new-mail flag)
+EnvironmentFile=%h/openpak/deploy/x360-xmessaging/internal.env
+Volume=%h/openpak/deploy/x360-xpnfront/state:/var/lib/x360-xpnfront:rw,Z
 ReadOnly=true
 DropCapability=ALL
 NoNewPrivileges=true
