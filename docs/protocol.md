@@ -11,3 +11,7 @@ come from x360-xuacs. Native limits: 100 friends, 250 blocks, gamertags of 15 AS
 
 A logoff (0x400 elements, 40 bytes) is accepted for a ticket user, or after a console-only ticket replaced the
 user's, for a profile x360-xuacs issued on the authenticated console.
+
+## Fixtures
+
+Replies are byte-identical to x360-xuacs v0.9.7, whose fixtures come from a console request and replies encoded independently with the XAM 17559 XRL codec.
