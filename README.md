@@ -19,7 +19,7 @@ OpenPak's Xbox 360 presence and friends server (Live service 1, `xpnfront`).
 | `GET /healthz` | | Health probe |
 
 Identity headers (`X-X360-Account`, `X-X360-Users`) are trusted only with `X360_GATEWAY_KEY`. Split out of
-[`x360-xuacs`](https://github.com/openpak/x360-xuacs) on 2026-11-01, one repository per Live service.
+[`x360-xuacs`](https://github.com/openpak/x360-xuacs), one repository per Live service.
 
 ## Run
 
