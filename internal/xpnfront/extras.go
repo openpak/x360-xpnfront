@@ -9,12 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"log/slog"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/openpak/x360-common/pgstate"
 )
 
 // hrNewMail is the per-user hr in a 0x2 reply that makes the console fetch its inbox.
@@ -22,22 +24,60 @@ const hrNewMail = 0x001512F0
 
 const blobLen = 60 // the per-user presence blob (requests 0x16/0x17)
 
-// State keeps the per-user presence blobs, one JSON file, saved atomically.
+// Schema is the Postgres schema x360-xpnfront owns inside the x360 database.
+const Schema = "x360_xpnfront"
+
+const blobsKey = "blobs"
+
+// State keeps the per-user presence blobs as one document in Postgres; a nil pg
+// keeps them in memory only (tests).
 type State struct {
-	Path string // "" keeps the blobs in memory only
+	pg   *pgstate.Store
 	mu   sync.Mutex
 	blob map[string]string // xuid (16 hex) -> 60 bytes in hex
 }
 
-func (s *State) load() {
-	if s.blob != nil {
-		return
+// NewMemoryState is a state that forgets on exit (tests).
+func NewMemoryState() *State { return &State{blob: map[string]string{}} }
+
+// OpenState opens the Postgres state in schema. When the database holds none
+// yet and legacyFile (the old state.json) exists, it is imported once and left
+// in place. An empty dsn is an error.
+func OpenState(ctx context.Context, dsn, schema, legacyFile string) (*State, error) {
+	pg, err := pgstate.Open(ctx, dsn, schema)
+	if err != nil {
+		return nil, err
 	}
-	s.blob = map[string]string{}
-	if s.Path != "" {
-		if raw, err := os.ReadFile(s.Path); err == nil {
-			json.Unmarshal(raw, &s.blob)
+	s := &State{pg: pg, blob: map[string]string{}}
+	found, err := pg.Load(ctx, blobsKey, &s.blob)
+	if err == nil && !found && legacyFile != "" {
+		raw, rerr := os.ReadFile(legacyFile)
+		switch {
+		case rerr == nil:
+			if err = json.Unmarshal(raw, &s.blob); err == nil {
+				err = pg.Save(ctx, blobsKey, s.blob)
+			}
+			if err == nil {
+				slog.Info("imported state.json into Postgres", "blobs", len(s.blob))
+			}
+		case !os.IsNotExist(rerr):
+			err = rerr
 		}
+	}
+	if err != nil {
+		pg.Close()
+		return nil, err
+	}
+	if s.blob == nil {
+		s.blob = map[string]string{}
+	}
+	return s, nil
+}
+
+// Close releases the database pool.
+func (s *State) Close() {
+	if s.pg != nil {
+		s.pg.Close()
 	}
 }
 
@@ -45,32 +85,24 @@ func (s *State) load() {
 func (s *State) Set(xuid uint64, b []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.load()
 	k := fmt.Sprintf("%016x", xuid)
 	if len(b) == blobLen {
 		s.blob[k] = hex.EncodeToString(b)
 	} else {
 		delete(s.blob, k)
 	}
-	if s.Path == "" {
+	if s.pg == nil {
 		return nil
 	}
-	raw, _ := json.Marshal(s.blob)
-	tmp := s.Path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.Path)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.pg.Save(ctx, blobsKey, s.blob)
 }
 
 // Get returns the stored 60 bytes, or nil.
 func (s *State) Get(xuid uint64) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.load()
 	b, _ := hex.DecodeString(s.blob[fmt.Sprintf("%016x", xuid)])
 	return b
 }

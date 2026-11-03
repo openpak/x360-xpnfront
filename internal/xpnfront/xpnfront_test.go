@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -235,7 +234,8 @@ func TestBlockUnblock(t *testing.T) {
 }
 
 func TestPresenceBlob(t *testing.T) {
-	st := &State{Path: filepath.Join(t.TempDir(), "s.json")}
+	schema := pgSchema(t)
+	st := testState(t, schema)
 	h := &Handler{Social: &graph{}, IDs: ids{}, State: st}
 	user := uint64(0x0009005f5139dadb)
 	get := u64(xpHeader(0x430, 8), user)
@@ -253,7 +253,7 @@ func TestPresenceBlob(t *testing.T) {
 		t.Fatalf("set: %x %v", got, err)
 	}
 	// persisted and reloaded
-	h.State = &State{Path: st.Path}
+	h.State = testState(t, schema)
 	got, err = h.presenceFriends(context.Background(), get, fixtureUser)
 	if err != nil || len(got) != 38+60 || !bytes.Equal(got[38:], blob) || binary.LittleEndian.Uint32(got[4:]) != 66 || binary.LittleEndian.Uint16(got[36:]) != 60 {
 		t.Fatalf("get: %x %v", got, err)

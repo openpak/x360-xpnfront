@@ -12,6 +12,8 @@ IP=10.89.2.203
 Environment=X360_XPNFRONT_ADDR=:10001
 Environment=X360_XPNFRONT_STATE=/var/lib/x360-xpnfront/state.json
 Environment=X360_XMESSAGING_INTERNAL_URL=http://openpak-x360-xmessaging:10118
+# db.env defines X360_XPNFRONT_DATABASE_URL (Postgres, schema x360_xpnfront; required), mode 0600, never committed.
+EnvironmentFile=%h/openpak/deploy/x360-xpnfront/db.env
 EnvironmentFile=%h/openpak/deploy/x360-gateway-key.env
 EnvironmentFile=%h/openpak/deploy/x360-xpnfront/core.env
 EnvironmentFile=%h/openpak/deploy/x360-xuacs-internal.env

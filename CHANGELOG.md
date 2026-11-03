@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.0 (2026-11-03)
+
+- Presence blobs move to Postgres (schema `x360_xpnfront` in database `x360`, `X360_XPNFRONT_DATABASE_URL`, required: the
+  service refuses to start without it). An existing `state.json` (`X360_XPNFRONT_STATE`) is imported once and left in place.
+
 ## v0.2.0
 
 - Friend list status byte: 1 outgoing and 2 incoming pending requests from the account core (x360-common v0.3.0).

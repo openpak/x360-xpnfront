@@ -17,7 +17,7 @@ Other requests on the same endpoint (layouts in the RE note re-friends-requests.
   x360-xuacs and the account core's Block/Unblock is called; reply HTTP 200, empty body.
 - 0x581 / 0x582 / 0x580 / 0x207 game invites: validated, logged, empty 200 (`ponytail:` delivery to the recipient's
   inbox comes with x360-xmessaging v0.2).
-- 0x16 set / 0x17 get the 60-byte per-user presence data (state file `X360_XPNFRONT_STATE`). 0x16 reply: request
+- 0x16 set / 0x17 get the 60-byte per-user presence data (stored in Postgres, `X360_XPNFRONT_DATABASE_URL`). 0x16 reply: request
   header with msg_len 4 + `u32 0`; 0x17 reply: header with msg_len 6+n + `u32 0, u16 n, u8[n]` (n 0 or 60).
 
 A logoff (0x400 elements, 40 bytes) is accepted for a ticket user, or after a console-only ticket replaced the

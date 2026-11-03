@@ -33,7 +33,17 @@ func main() {
 		log.Error("X360_XUACS_INTERNAL_URL and X360_XUACS_INTERNAL_KEY are required")
 		os.Exit(2)
 	}
-	h := &xpnfront.Handler{Social: core, IDs: ids, Log: log, State: &xpnfront.State{Path: os.Getenv("X360_XPNFRONT_STATE")}}
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// X360_XPNFRONT_STATE is only the old state.json, imported once when the database is empty.
+	state, err := xpnfront.OpenState(dbCtx, os.Getenv("X360_XPNFRONT_DATABASE_URL"), xpnfront.Schema, os.Getenv("X360_XPNFRONT_STATE"))
+	dbCancel()
+	if err != nil {
+		log.Error("state: X360_XPNFRONT_DATABASE_URL is required and must be reachable", "err", err)
+		os.Exit(2)
+	}
+	defer state.Close()
+	log.Info("state in Postgres", "schema", xpnfront.Schema)
+	h := &xpnfront.Handler{Social: core, IDs: ids, Log: log, State: state}
 	if u := os.Getenv("X360_XMESSAGING_INTERNAL_URL"); u != "" {
 		h.Mail = &xpnfront.UnreadClient{URL: u, Key: os.Getenv("X360_XMESSAGING_INTERNAL_KEY")}
 	}
