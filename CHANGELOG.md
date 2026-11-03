@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.1 (2026-11-03)
+
+- Every request logs one stderr line, `http <method> <path> -> <status> <duration>ms` (x360-common v0.5.1 `httplog`): no query, headers, cookies, tokens or bodies; `/healthz` skipped.
+
 ## v0.3.0 (2026-11-03)
 
 - Presence blobs move to Postgres (schema `x360_xpnfront` in database `x360`, `X360_XPNFRONT_DATABASE_URL`, required: the

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/openpak/x360-common/accountcore"
+	"github.com/openpak/x360-common/httplog"
 	"github.com/openpak/x360-common/wire"
 	"github.com/openpak/x360-common/xuacsapi"
 	"github.com/openpak/x360-xpnfront/internal/xpnfront"
@@ -47,7 +48,7 @@ func main() {
 	if u := os.Getenv("X360_XMESSAGING_INTERNAL_URL"); u != "" {
 		h.Mail = &xpnfront.UnreadClient{URL: u, Key: os.Getenv("X360_XMESSAGING_INTERNAL_KEY")}
 	}
-	srv := &http.Server{Addr: addr, Handler: wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: httplog.Wrap(wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h)), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

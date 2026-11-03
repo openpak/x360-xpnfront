@@ -25,6 +25,7 @@ github.com/jackc/puddle/v2/internal/genstack
 # github.com/openpak/x360-common v0.0.0 => ../x360-common
 ## explicit; go 1.26.0
 github.com/openpak/x360-common/accountcore
+github.com/openpak/x360-common/httplog
 github.com/openpak/x360-common/pgstate
 github.com/openpak/x360-common/wire
 github.com/openpak/x360-common/xuacsapi
