@@ -51,13 +51,23 @@ func Open(ctx context.Context, dsn, schema string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, q := range []string{
-		"CREATE SCHEMA IF NOT EXISTS " + schema,
+	// A schema pre-created for a role that has no CREATE on the database is
+	// used as is; CREATE SCHEMA IF NOT EXISTS would still demand the privilege.
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname=$1)`, schema).Scan(&exists); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("pgstate: %w", err)
+	}
+	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS docs (
 			key text PRIMARY KEY,
 			value jsonb NOT NULL,
 			updated_at timestamptz NOT NULL DEFAULT now())`,
-	} {
+	}
+	if !exists {
+		stmts = append([]string{"CREATE SCHEMA " + schema}, stmts...)
+	}
+	for _, q := range stmts {
 		if _, err := pool.Exec(ctx, q); err != nil {
 			pool.Close()
 			return nil, fmt.Errorf("pgstate: %w", err)

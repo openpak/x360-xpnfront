@@ -87,6 +87,27 @@ func (c *Client) OnlineXUID(ctx context.Context, account string) (uint64, error)
 	return parseXUID(out.Online)
 }
 
+// AccountXUIDs lists every XUID xuacs holds for the account (online and the
+// offline ones issued per console) WITHOUT allocating any; empty for an account
+// xuacs does not know. Used to erase an account's per-XUID data.
+func (c *Client) AccountXUIDs(ctx context.Context, account string) ([]uint64, error) {
+	var out struct {
+		XUIDs []string `json:"xuids"`
+	}
+	if err := c.call(ctx, "/internal/v1/account-xuids", map[string]string{"account": account}, &out); err != nil {
+		return nil, err
+	}
+	var xs []uint64
+	for _, s := range out.XUIDs {
+		x, err := parseXUID(s)
+		if err != nil {
+			return nil, err
+		}
+		xs = append(xs, x)
+	}
+	return xs, nil
+}
+
 // AccountByXUID is the account behind an online XUID; ok is false when none is.
 func (c *Client) AccountByXUID(ctx context.Context, xuid uint64) (account string, ok bool, err error) {
 	var out struct {

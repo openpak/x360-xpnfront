@@ -325,3 +325,20 @@ func TestUnreadClient(t *testing.T) {
 		t.Fatal("bad key accepted")
 	}
 }
+
+func TestStateEraseDropsOnlyThoseBlobs(t *testing.T) {
+	st := NewMemoryState()
+	const a, b = 0x0009000000000001, 0x0009000000000002
+	blob := bytes.Repeat([]byte{1}, blobLen)
+	st.Set(a, blob)
+	st.Set(b, blob)
+	if n, err := st.Erase([]uint64{a}); err != nil || n != 1 {
+		t.Fatalf("erase: %d %v", n, err)
+	}
+	if n, err := st.Erase([]uint64{a}); err != nil || n != 0 {
+		t.Fatalf("second erase: %d %v", n, err)
+	}
+	if len(st.Get(a)) != 0 || !bytes.Equal(st.Get(b), blob) {
+		t.Fatal("wrong blob erased")
+	}
+}

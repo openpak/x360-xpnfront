@@ -304,3 +304,23 @@ func (h *Handler) other(ctx context.Context, e []byte, users map[uint64]string) 
 	}
 	return nil, true, nil
 }
+
+// Erase drops the presence blobs of xuids and returns how many existed.
+func (s *State) Erase(xuids []uint64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, x := range xuids {
+		k := fmt.Sprintf("%016x", x)
+		if _, ok := s.blob[k]; ok {
+			delete(s.blob, k)
+			n++
+		}
+	}
+	if n == 0 || s.pg == nil {
+		return n, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return n, s.pg.Save(ctx, blobsKey, s.blob)
+}

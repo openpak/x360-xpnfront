@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.0 (2026-11-04)
+
+- Account erasure (card #120). `DELETE /internal/accounts/{account_id}/data` with `Authorization: Bearer $ACCOUNT_ERASE_KEY` on a separate listener `ERASE_ADDR` (default `:9099`, container network only, never published; not served while the key is unset). Reply `{"service":"x360-xpnfront","rows":N}`; one `account erased` log line per erasure. Deletes the account's presence blob (XUID from x360-xuacs, existing settings).
+
 ## v0.3.1 (2026-11-03)
 
 - Every request logs one stderr line, `http <method> <path> -> <status> <duration>ms` (x360-common v0.5.1 `httplog`): no query, headers, cookies, tokens or bodies; `/healthz` skipped.

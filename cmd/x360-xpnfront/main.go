@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/openpak/x360-common/accountcore"
+	"github.com/openpak/x360-common/erase"
 	"github.com/openpak/x360-common/httplog"
 	"github.com/openpak/x360-common/wire"
 	"github.com/openpak/x360-common/xuacsapi"
@@ -51,6 +52,15 @@ func main() {
 	srv := &http.Server{Addr: addr, Handler: httplog.Wrap(wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h)), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Account erasure (card #120): x360-xuacs still knows the account's XUIDs while
+	// the website finaliser runs (it is erased last).
+	erase.Serve(ctx, "x360-xpnfront", func(c context.Context, account string) (int, error) {
+		xs, err := ids.AccountXUIDs(c, account)
+		if err != nil {
+			return 0, err
+		}
+		return state.Erase(xs)
+	})
 	go func() {
 		<-ctx.Done()
 		sc, cancel := context.WithTimeout(context.Background(), 5*time.Second)
